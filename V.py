@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -321,8 +321,9 @@ class App:
         checked_any = False
         for cookie_db in cookie_dbs:
             try:
-                uri = "file:" + cookie_db.replace("\\", "/") + "?mode=ro"
-                con = sqlite3.connect(uri, uri=True, timeout=2)
+                # Pass the Windows path directly; hand-built SQLite file URIs
+                # can fail on Windows paths or special characters.
+                con = sqlite3.connect(cookie_db, timeout=2)
                 try:
                     row = con.execute(
                         "SELECT 1 FROM cookies WHERE lower(name)=lower(?) LIMIT 1",
