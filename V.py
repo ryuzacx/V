@@ -1,9 +1,9 @@
-import os, json, base64, ctypes, subprocess, sys, urllib.request, hashlib, threading
+import os, json, base64, ctypes, subprocess, sys, urllib.request, hashlib, threading, time
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -119,11 +119,51 @@ class App:
         ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
         self.status = tk.StringVar(value="Ready")
         ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
+
+        log_header = ttk.Frame(f)
+        log_header.pack(fill="x", pady=(10,3))
+        ttk.Label(log_header, text="Activity Log", font=("Segoe UI", 10, "bold")).pack(side="left")
+        self.live_clock = ttk.Label(log_header, text="--:--:--", font=("Consolas", 10, "bold"))
+        self.live_clock.pack(side="right")
+        log_frame = ttk.Frame(f)
+        log_frame.pack(fill="both", expand=False)
+        self.log_box = tk.Text(log_frame, height=6, wrap="word", state="disabled",
+                               bg="#08172a", fg="#cbdcf3", insertbackground="#ffffff",
+                               selectbackground="#24558a", relief="flat", bd=0,
+                               font=("Consolas", 9), padx=8, pady=6)
+        self.log_box.pack(side="left", fill="both", expand=True)
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_box.yview)
+        log_scroll.pack(side="right", fill="y")
+        self.log_box.configure(yscrollcommand=log_scroll.set)
+        self.status.trace_add("write", self._status_changed)
+        self.root.after(250, self._update_clock)
         ttk.Label(f, text="CAPTCHA and 2FA must be completed manually.").pack(anchor="w", pady=(6,0))
         self.join_queue = []
         self.queue_active = False
         self.refresh()
         root.after(1500, self.check_update)
+
+    def _update_clock(self):
+        self.live_clock.configure(text=time.strftime("%H:%M:%S"))
+        self.root.after(1000, self._update_clock)
+
+    def _status_changed(self, *_):
+        message = self.status.get().strip()
+        if message:
+            self.log_activity(message)
+
+    def log_activity(self, message):
+        if not hasattr(self, "log_box"):
+            return
+        stamp = time.strftime("%H:%M:%S")
+        self.log_box.configure(state="normal")
+        self.log_box.insert("end", f"[{stamp}] {message}\\n")
+        self.log_box.see("end")
+        # Keep the activity panel bounded during long sessions.
+        lines = int(self.log_box.index("end-1c").split(".")[0])
+        if lines > 300:
+            self.log_box.delete("1.0", f"{lines-300}.0")
+        self.log_box.configure(state="disabled")
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
