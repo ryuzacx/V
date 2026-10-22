@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -56,7 +56,7 @@ def find_chrome():
 class App:
     def __init__(self, root):
         self.root, self.accounts = root, load_accounts()
-        root.title("V"); root.geometry("680x500"); root.minsize(600, 420)
+        root.title("V"); root.geometry("760x570"); root.minsize(680, 500)
         f = ttk.Frame(root, padding=12); f.pack(fill="both", expand=True)
         ttk.Label(f, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(anchor="w")
         ttk.Label(f, text="Save accounts as username:password. Login is manual.").pack(anchor="w", pady=(3,10))
@@ -64,12 +64,22 @@ class App:
         self.entry = ttk.Entry(row); self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", lambda e: self.add())
         ttk.Button(row, text="Add account", command=self.add).pack(side="left", padx=(8,0))
+        joinrow = ttk.Frame(f); joinrow.pack(fill="x", pady=(0,8))
+        ttk.Label(joinrow, text="Game URL:").pack(side="left")
+        self.url_entry = ttk.Entry(joinrow)
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(6,10))
+        ttk.Label(joinrow, text="Interval (detik):").pack(side="left")
+        self.interval = tk.StringVar(value="10")
+        ttk.Spinbox(joinrow, from_=1, to=3600, width=6, textvariable=self.interval).pack(side="left", padx=(6,0))
+
         self.tree = ttk.Treeview(f, columns=("username","status"), show="headings", selectmode="extended", height=13)
         self.tree.heading("username", text="Username"); self.tree.heading("status", text="Status")
         self.tree.column("username", width=260); self.tree.column("status", width=300)
         self.tree.pack(fill="both", expand=True)
         b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
         ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
+        ttk.Button(b, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
+        ttk.Button(b, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
         ttk.Button(b, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
         ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
         ttk.Button(b, text="Select all", command=lambda: self.tree.selection_set(self.tree.get_children())).pack(side="left")
@@ -77,6 +87,8 @@ class App:
         self.status = tk.StringVar(value="Ready")
         ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
         ttk.Label(f, text="CAPTCHA and 2FA must be completed manually.").pack(anchor="w", pady=(6,0))
+        self.join_queue = []
+        self.queue_active = False
         self.refresh()
         root.after(1500, self.check_update)
 
@@ -117,6 +129,62 @@ class App:
             except Exception as e: return messagebox.showerror("Chrome launch failed", str(e))
         self.status.set(f"Opened {len(ids)} selected account browser(s).")
 
+    def auto_join(self):
+        url = self.url_entry.get().strip()
+        if not (url.startswith("https://") or url.startswith("http://")):
+            return messagebox.showerror("Invalid game URL", "Paste the full Roblox game URL, starting with https://")
+        ids = [int(i) for i in self.tree.selection()]
+        if not ids:
+            return messagebox.showinfo("Select accounts", "Select one or more account rows first.")
+        try:
+            interval = int(self.interval.get().strip())
+            if interval < 1 or interval > 3600: raise ValueError()
+        except ValueError:
+            return messagebox.showerror("Invalid interval", "Interval must be a whole number from 1 to 3600 seconds.")
+        chrome = find_chrome()
+        if not chrome:
+            return messagebox.showerror("Chrome not found", "Install Google Chrome, then restart V.")
+        if self.queue_active:
+            return messagebox.showinfo("Queue running", "Stop the current queue before starting another.")
+        self.join_queue = [(i, url) for i in ids]
+        self.queue_active = True
+        self.queue_chrome = chrome
+        self.queue_interval_ms = interval * 1000
+        self.status.set(f"Auto Join started: {len(ids)} account(s), interval {interval}s.")
+        self._launch_next_join()
+
+    def _launch_next_join(self):
+        if not self.queue_active:
+            return
+        if not self.join_queue:
+            self.queue_active = False
+            self.status.set("Auto Join queue completed.")
+            return
+        i, url = self.join_queue.pop(0)
+        username = self.accounts[i]["username"]
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in username)
+        profile = os.path.join(PROFILES_DIR, safe)
+        os.makedirs(profile, exist_ok=True)
+        try:
+            subprocess.Popen([self.queue_chrome, "--user-data-dir=" + profile,
+                              "--no-first-run", "--no-default-browser-check", url])
+            remaining = len(self.join_queue)
+            self.status.set(f"Auto Join: opened {username}; {remaining} account(s) waiting.")
+        except Exception as e:
+            self.status.set(f"Auto Join failed for {username}: {e}")
+        if self.join_queue and self.queue_active:
+            self.root.after(self.queue_interval_ms, self._launch_next_join)
+        else:
+            self.queue_active = False
+            self.status.set("Auto Join queue completed.")
+
+    def stop_queue(self):
+        if self.queue_active:
+            self.queue_active = False
+            self.join_queue = []
+            self.status.set("Auto Join queue stopped.")
+        else:
+            self.status.set("No Auto Join queue is running.")
     def check_update(self):
         if not getattr(sys, "frozen", False):
             self.status.set(f"V {APP_VERSION} — updater requires packaged V.exe."); return
