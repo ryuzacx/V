@@ -157,7 +157,7 @@ class App:
             return
         stamp = time.strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{stamp}] {message}\\n")
+        self.log_box.insert("end", f"[{stamp}] {message}\n")
         self.log_box.see("end")
         # Keep the activity panel bounded during long sessions.
         lines = int(self.log_box.index("end-1c").split(".")[0])
