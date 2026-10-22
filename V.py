@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -56,7 +56,22 @@ def find_chrome():
 class App:
     def __init__(self, root):
         self.root, self.accounts = root, load_accounts()
-        root.title("V"); root.geometry("760x570"); root.minsize(680, 500)
+        root.title("V"); root.geometry("820x620"); root.minsize(700, 520)
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        root.configure(bg="#071326")
+        style.configure("TFrame", background="#071326")
+        style.configure("TLabel", background="#071326", foreground="#dbeafe")
+        style.configure("TButton", background="#17365d", foreground="#eaf2ff", bordercolor="#2b4d78", padding=(8,5))
+        style.map("TButton", background=[("active", "#24558a"), ("pressed", "#102b4d")])
+        style.configure("TEntry", fieldbackground="#10213b", foreground="#eaf2ff", insertcolor="#ffffff")
+        style.configure("TSpinbox", fieldbackground="#10213b", foreground="#eaf2ff", arrowcolor="#dbeafe")
+        style.configure("Treeview", background="#0b1b31", fieldbackground="#0b1b31", foreground="#e2eaf7",
+                        bordercolor="#203653", rowheight=27, font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", background="#183b66", foreground="#ffffff",
+                        relief="flat", font=("Segoe UI", 10, "bold"))
+        style.map("Treeview.Heading", background=[("active", "#24558a")])
+        style.map("Treeview", background=[("selected", "#24558a")], foreground=[("selected", "#ffffff")])
         f = ttk.Frame(root, padding=12); f.pack(fill="both", expand=True)
         ttk.Label(f, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(anchor="w")
         ttk.Label(f, text="Save accounts as username:password. Login is manual.").pack(anchor="w", pady=(3,10))
@@ -72,9 +87,18 @@ class App:
         self.interval = tk.StringVar(value="10")
         ttk.Spinbox(joinrow, from_=1, to=3600, width=6, textvariable=self.interval).pack(side="left", padx=(6,0))
 
-        self.tree = ttk.Treeview(f, columns=("username","status"), show="headings", selectmode="extended", height=13)
-        self.tree.heading("username", text="Username"); self.tree.heading("status", text="Status")
-        self.tree.column("username", width=260); self.tree.column("status", width=300)
+        self.auto_join_users = set()
+        self.tree = ttk.Treeview(f, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=13)
+        self.tree.heading("#0", text="Group / Account", anchor="w")
+        self.tree.heading("username", text="Username", anchor="w")
+        self.tree.heading("auto_join", text="Auto Join", anchor="center")
+        self.tree.column("#0", width=300, minwidth=180, stretch=True)
+        self.tree.column("username", width=260, minwidth=140, stretch=True)
+        self.tree.column("auto_join", width=100, minwidth=90, stretch=False, anchor="center")
+        self.tree.tag_configure("group", background="#172b46", foreground="#ffffff", font=("Segoe UI", 10, "bold"))
+        self.tree.tag_configure("row_even", background="#0b1b31", foreground="#dce8f8")
+        self.tree.tag_configure("row_odd", background="#10243e", foreground="#dce8f8")
+        self.tree.bind("<Button-1>", self.on_tree_click, True)
         self.tree.pack(fill="both", expand=True)
         b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
         ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
@@ -94,7 +118,32 @@ class App:
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
-        for i,a in enumerate(self.accounts): self.tree.insert("", "end", iid=str(i), values=(a["username"], "Saved"))
+        group_id = "group_default"
+        self.tree.insert("", "end", iid=group_id, text=f"Default ({len(self.accounts)})",
+                         values=("", ""), open=True, tags=("group",))
+        for i, a in enumerate(self.accounts):
+            username = a["username"]
+            checkbox = "☑" if username in self.auto_join_users else "☐"
+            tag = "row_even" if i % 2 == 0 else "row_odd"
+            self.tree.insert(group_id, "end", iid=str(i), text=username,
+                             values=(username, checkbox), tags=(tag,))
+
+    def on_tree_click(self, event):
+        item = self.tree.identify_row(event.y)
+        column = self.tree.identify_column(event.x)
+        if not item or item == "group_default":
+            return
+        if column == "#2":
+            try:
+                username = self.accounts[int(item)]["username"]
+            except (ValueError, IndexError):
+                return "break"
+            if username in self.auto_join_users:
+                self.auto_join_users.remove(username)
+            else:
+                self.auto_join_users.add(username)
+            self.tree.set(item, "auto_join", "☑" if username in self.auto_join_users else "☐")
+            return "break"
 
     def add(self):
         value = self.entry.get().strip()
@@ -110,14 +159,16 @@ class App:
         self.entry.delete(0,"end"); self.refresh(); self.status.set("Account saved.")
 
     def delete(self):
-        ids = sorted((int(i) for i in self.tree.selection()), reverse=True)
+        ids = sorted((int(i) for i in self.tree.selection() if i.isdigit()), reverse=True)
         if not ids: return
         if not messagebox.askyesno("Delete accounts", "Delete selected saved accounts? Chrome profile folders are kept."): return
+        removed = {self.accounts[i]["username"] for i in ids}
         for i in ids: self.accounts.pop(i)
+        self.auto_join_users.difference_update(removed)
         save_accounts(self.accounts); self.refresh(); self.status.set("Selected accounts deleted.")
 
     def open(self, url):
-        ids = [int(i) for i in self.tree.selection()]
+        ids = [int(i) for i in self.tree.selection() if i.isdigit()]
         if not ids: return messagebox.showinfo("Select accounts", "Select one or more account rows first.")
         chrome = find_chrome()
         if not chrome: return messagebox.showerror("Chrome not found", "Install Google Chrome, then restart V.")
@@ -133,9 +184,9 @@ class App:
         url = self.url_entry.get().strip()
         if not (url.startswith("https://") or url.startswith("http://")):
             return messagebox.showerror("Invalid game URL", "Paste the full Roblox game URL, starting with https://")
-        ids = [int(i) for i in self.tree.selection()]
+        ids = [i for i, a in enumerate(self.accounts) if a["username"] in self.auto_join_users]
         if not ids:
-            return messagebox.showinfo("Select accounts", "Select one or more account rows first.")
+            return messagebox.showinfo("Auto Join", "Tick the Auto Join checkbox for at least one account.")
         try:
             interval = int(self.interval.get().strip())
             if interval < 1 or interval > 3600: raise ValueError()
