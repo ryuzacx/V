@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -35,13 +35,13 @@ def load_accounts():
         for row in rows:
             try:
                 u, p = dpapi(base64.b64decode(row["secret"]), True).decode().split("\n", 1)
-                result.append({"username": u, "password": p})
+                result.append({"username": u, "password": p, "group": str(row.get("group", "Default") or "Default")})
             except Exception: pass
         return result
     except Exception: return []
 
 def save_accounts(accounts):
-    rows = [{"secret": base64.b64encode(dpapi((a["username"]+"\n"+a["password"]).encode())).decode()} for a in accounts]
+    rows = [{"secret": base64.b64encode(dpapi((a["username"]+"\n"+a["password"]).encode())).decode(), "group": str(a.get("group", "Default") or "Default")} for a in accounts]
     tmp = DATA_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f: json.dump(rows, f)
     os.replace(tmp, DATA_FILE)
@@ -99,6 +99,15 @@ class App:
         self.tree.tag_configure("row_even", background="#0b1b31", foreground="#dce8f8")
         self.tree.tag_configure("row_odd", background="#10243e", foreground="#dce8f8")
         self.tree.bind("<Button-1>", self.on_tree_click, True)
+        self.tree.bind("<Button-3>", self.show_context_menu)
+        self.context_menu = tk.Menu(root, tearoff=0, bg="#10243e", fg="#eaf2ff",
+                                     activebackground="#24558a", activeforeground="#ffffff",
+                                     bd=0, relief="flat")
+        self.context_menu.add_command(label="Copy username", command=lambda: self.copy_selected("username"))
+        self.context_menu.add_command(label="Copy password", command=lambda: self.copy_selected("password"))
+        self.context_menu.add_command(label="Copy username:password", command=lambda: self.copy_selected("combo"))
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Ganti Group / Move To Group", command=self.move_selected_to_group)
         self.tree.pack(fill="both", expand=True)
         b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
         ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
@@ -106,7 +115,7 @@ class App:
         ttk.Button(b, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
         ttk.Button(b, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
         ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
-        ttk.Button(b, text="Select all", command=lambda: self.tree.selection_set(self.tree.get_children("group_default"))).pack(side="left")
+        ttk.Button(b, text="Select all", command=self.select_all_accounts).pack(side="left")
         ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
         self.status = tk.StringVar(value="Ready")
         ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
@@ -118,15 +127,97 @@ class App:
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
-        group_id = "group_default"
-        self.tree.insert("", "end", iid=group_id, text=f"Default ({len(self.accounts)})",
-                         values=("", ""), open=True, tags=("group",))
-        for i, a in enumerate(self.accounts):
-            username = a["username"]
-            checkbox = "☑" if username in self.auto_join_users else "☐"
-            tag = "row_even" if i % 2 == 0 else "row_odd"
-            self.tree.insert(group_id, "end", iid=str(i), text=username,
-                             values=(username, checkbox), tags=(tag,))
+        grouped = {}
+        for i, account in enumerate(self.accounts):
+            group = str(account.get("group", "Default") or "Default").strip() or "Default"
+            account["group"] = group
+            key = group.casefold()
+            if key not in grouped:
+                grouped[key] = {"name": group, "accounts": []}
+            grouped[key]["accounts"].append((i, account))
+        for group_index, group_data in enumerate(grouped.values()):
+            group_id = f"group_{group_index}"
+            members = group_data["accounts"]
+            self.tree.insert("", "end", iid=group_id, text=f'{group_data["name"]} ({len(members)})',
+                             values=("", ""), open=True, tags=("group",))
+            for row_index, (i, account) in enumerate(members):
+                username = account["username"]
+                checkbox = "☑" if username in self.auto_join_users else "☐"
+                tag = "row_even" if row_index % 2 == 0 else "row_odd"
+                self.tree.insert(group_id, "end", iid=str(i), text=username,
+                                 values=(username, checkbox), tags=(tag,))
+
+    def select_all_accounts(self):
+        self.tree.selection_set([str(i) for i in range(len(self.accounts))])
+
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item or not item.isdigit():
+            return
+        if item not in self.tree.selection():
+            self.tree.selection_set(item)
+        self.tree.focus(item)
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def copy_selected(self, kind):
+        ids = sorted(int(item) for item in self.tree.selection() if item.isdigit())
+        if not ids:
+            return
+        values = []
+        for i in ids:
+            account = self.accounts[i]
+            if kind == "username":
+                values.append(account["username"])
+            elif kind == "password":
+                values.append(account["password"])
+            else:
+                values.append(account["username"] + ":" + account["password"])
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n".join(values))
+        self.status.set(f"Copied {len(values)} account(s) to clipboard.")
+
+    def move_selected_to_group(self):
+        ids = sorted(int(item) for item in self.tree.selection() if item.isdigit())
+        if not ids:
+            return
+        existing = sorted({str(a.get("group", "Default") or "Default") for a in self.accounts}, key=str.casefold)
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Ganti Group / Move To Group")
+        dialog.configure(bg="#071326")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        frame = ttk.Frame(dialog, padding=14)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"Pindahkan {len(ids)} akun ke group:").pack(anchor="w", pady=(0,8))
+        group_var = tk.StringVar(value=str(self.accounts[ids[0]].get("group", "Default") or "Default"))
+        entry = ttk.Combobox(frame, textvariable=group_var, values=existing, width=30)
+        entry.pack(fill="x", pady=(0,12))
+        entry.focus_set()
+        def apply_group():
+            name = group_var.get().strip()
+            if not name:
+                messagebox.showerror("Nama group kosong", "Masukkan nama group terlebih dahulu.", parent=dialog)
+                return
+            canonical = next((g for g in existing if g.casefold() == name.casefold()), name)
+            for i in ids:
+                self.accounts[i]["group"] = canonical
+            try:
+                save_accounts(self.accounts)
+            except Exception as e:
+                messagebox.showerror("Save failed", str(e), parent=dialog)
+                return
+            dialog.destroy()
+            self.refresh()
+            self.status.set(f"{len(ids)} akun dipindahkan ke group {canonical}.")
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x")
+        ttk.Button(buttons, text="Move", command=apply_group).pack(side="left")
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).pack(side="left", padx=(8,0))
+        entry.bind("<Return>", lambda event: apply_group())
 
     def on_tree_click(self, event):
         item = self.tree.identify_row(event.y)
@@ -152,7 +243,7 @@ class App:
         if not u or not p: return messagebox.showerror("Invalid format", "Username and password cannot be empty.")
         if any(a["username"].casefold()==u.casefold() for a in self.accounts):
             return messagebox.showinfo("Duplicate account", "That username is already saved.")
-        self.accounts.append({"username":u,"password":p})
+        self.accounts.append({"username":u,"password":p,"group":"Default"})
         try: save_accounts(self.accounts)
         except Exception as e:
             self.accounts.pop(); return messagebox.showerror("Save failed", str(e))
