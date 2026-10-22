@@ -3,10 +3,11 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
+UI_SETTINGS_FILE = os.path.join(ROOT, "ui_settings.json")
 PROFILES_DIR = os.path.join(ROOT, "chrome_profiles")
 os.makedirs(PROFILES_DIR, exist_ok=True)
 os.makedirs(ROOT, exist_ok=True)
@@ -72,6 +73,12 @@ class App:
                         relief="flat", font=("Segoe UI", 10, "bold"))
         style.map("Treeview.Heading", background=[("active", "#24558a")])
         style.map("Treeview", background=[("selected", "#24558a")], foreground=[("selected", "#ffffff")])
+        self.ui_settings = {}
+        try:
+            with open(UI_SETTINGS_FILE, "r", encoding="utf-8") as sf:
+                self.ui_settings = json.load(sf)
+        except Exception:
+            self.ui_settings = {}
         f = ttk.Frame(root, padding=12); f.pack(fill="both", expand=True)
         ttk.Label(f, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(anchor="w")
         ttk.Label(f, text="Save accounts as username:password. Login is manual.").pack(anchor="w", pady=(3,10))
@@ -108,7 +115,22 @@ class App:
         self.context_menu.add_command(label="Copy username:password", command=lambda: self.copy_selected("combo"))
         self.context_menu.add_separator()
         self.context_menu.add_command(label="Ganti Group / Move To Group", command=self.move_selected_to_group)
-        self.tree.pack(fill="both", expand=True)
+        # Keep the table inside the main window; drag the bottom-right grip to resize it.
+        self.table_width = max(420, min(1800, int(self.ui_settings.get("table_width", 1100))))
+        self.table_height = max(140, min(1000, int(self.ui_settings.get("table_height", 360))))
+        self.table_shell = ttk.Frame(f, width=self.table_width, height=self.table_height)
+        self.table_shell.pack(anchor="nw", pady=(0, 0))
+        self.table_shell.pack_propagate(False)
+        self.table_shell.rowconfigure(0, weight=1)
+        self.table_shell.columnconfigure(0, weight=1)
+        self.tree.pack_forget()
+        self.tree.grid(in_=self.table_shell, row=0, column=0, sticky="nsew")
+        self.resize_grip = ttk.Label(self.table_shell, text="◢", anchor="center", cursor="size_nw_se",
+                                     background="#183b66", foreground="#dbeafe")
+        self.resize_grip.grid(row=1, column=0, sticky="e")
+        self.resize_grip.bind("<Button-1>", self._table_resize_start)
+        self.resize_grip.bind("<B1-Motion>", self._table_resize_drag)
+        self.resize_grip.bind("<ButtonRelease-1>", self._table_resize_end)
         b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
         ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
         ttk.Button(b, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
@@ -142,6 +164,31 @@ class App:
         self.queue_active = False
         self.refresh()
         root.after(1500, self.check_update)
+
+    def _table_resize_start(self, event):
+        self._resize_start_x = event.x_root
+        self._resize_start_y = event.y_root
+        self._resize_start_width = self.table_shell.winfo_width()
+        self._resize_start_height = self.table_shell.winfo_height()
+
+    def _table_resize_drag(self, event):
+        dx = event.x_root - self._resize_start_x
+        dy = event.y_root - self._resize_start_y
+        self.table_width = max(420, min(1800, self._resize_start_width + dx))
+        self.table_height = max(140, min(1000, self._resize_start_height + dy))
+        self.table_shell.configure(width=self.table_width, height=self.table_height)
+
+    def _table_resize_end(self, event=None):
+        self.ui_settings["table_width"] = self.table_width
+        self.ui_settings["table_height"] = self.table_height
+        try:
+            tmp = UI_SETTINGS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as sf:
+                json.dump(self.ui_settings, sf)
+            os.replace(tmp, UI_SETTINGS_FILE)
+            self.log_activity(f"Table size saved: {self.table_width} x {self.table_height}")
+        except Exception as exc:
+            self.log_activity(f"Could not save table size: {exc}")
 
     def _update_clock(self):
         self.live_clock.configure(text=time.strftime("%H:%M:%S"))
