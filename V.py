@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -157,7 +157,7 @@ class App:
             return
         stamp = time.strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{stamp}] {message}\\n")
+        self.log_box.insert("end", f"[{stamp}] {message}\n")
         self.log_box.see("end")
         # Keep the activity panel bounded during long sessions.
         lines = int(self.log_box.index("end-1c").split(".")[0])
