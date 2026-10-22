@@ -1,8 +1,8 @@
-name: Build V
+name: Build and publish V
 on:
-  workflow_dispatch:
   push:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -12,6 +12,35 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-      - run: python -m pip install pyinstaller
-      - run: pyinstaller --noconfirm --onefile --windowed --name V V.py
+          python-version: "3.12"
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $source = Get-Content V.py -Raw
+          if ($source -notmatch 'APP_VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') { throw "APP_VERSION missing" }
+          "version=$($Matches[1])" >> $env:GITHUB_OUTPUT
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pyinstaller
+      - name: Build V
+        run: pyinstaller --noconfirm --clean --onefile --windowed --name V V.py
+      - name: Build updater
+        run: pyinstaller --noconfirm --clean --onefile --console --name VUpdater VUpdater.py
+      - name: Create checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist/V.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  V.exe" | Set-Content -Encoding ascii dist/V.exe.sha256
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: V ${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: |
+            dist/V.exe
+            dist/V.exe.sha256
+            dist/VUpdater.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
