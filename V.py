@@ -1,9 +1,9 @@
-import os, json, base64, ctypes, subprocess, sys, urllib.request, hashlib, threading, time
+import os, json, base64, ctypes, subprocess, sys, urllib.request, hashlib, threading, time, sqlite3, shutil, tempfile
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -35,13 +35,13 @@ def load_accounts():
         for row in rows:
             try:
                 u, p = dpapi(base64.b64decode(row["secret"]), True).decode().split("\n", 1)
-                result.append({"username": u, "password": p, "group": str(row.get("group", "Default") or "Default")})
+                result.append({"username": u, "password": p, "group": str(row.get("group", "Default") or "Default"), "notes": str(row.get("notes", ""))})
             except Exception: pass
         return result
     except Exception: return []
 
 def save_accounts(accounts):
-    rows = [{"secret": base64.b64encode(dpapi((a["username"]+"\n"+a["password"]).encode())).decode(), "group": str(a.get("group", "Default") or "Default")} for a in accounts]
+    rows = [{"secret": base64.b64encode(dpapi((a["username"]+"\n"+a["password"]).encode())).decode(), "group": str(a.get("group", "Default") or "Default"), "notes": str(a.get("notes", ""))} for a in accounts]
     tmp = DATA_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f: json.dump(rows, f)
     os.replace(tmp, DATA_FILE)
@@ -88,13 +88,15 @@ class App:
         ttk.Spinbox(joinrow, from_=1, to=3600, width=6, textvariable=self.interval).pack(side="left", padx=(6,0))
 
         self.auto_join_users = set()
-        self.tree = ttk.Treeview(f, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=13)
+        self.tree = ttk.Treeview(f, columns=("username","auto_join","notes"), show="tree headings", selectmode="extended", height=13)
         self.tree.heading("#0", text="Group / Account", anchor="w")
         self.tree.heading("username", text="Username", anchor="w")
         self.tree.heading("auto_join", text="Auto Join", anchor="center")
+        self.tree.heading("notes", text="Notes", anchor="w")
         self.tree.column("#0", width=300, minwidth=180, stretch=True)
         self.tree.column("username", width=260, minwidth=140, stretch=True)
         self.tree.column("auto_join", width=100, minwidth=90, stretch=False, anchor="center")
+        self.tree.column("notes", width=180, minwidth=120, stretch=True)
         self.tree.tag_configure("group", background="#172b46", foreground="#ffffff", font=("Segoe UI", 10, "bold"))
         self.tree.tag_configure("row_even", background="#0b1b31", foreground="#dce8f8")
         self.tree.tag_configure("row_odd", background="#10243e", foreground="#dce8f8")
@@ -113,7 +115,7 @@ class App:
         ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
         ttk.Button(b, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
         ttk.Button(b, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
-        ttk.Button(b, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
+        ttk.Button(b, text="Open manual login", command=self.open_manual_login).pack(side="left", padx=8)
         ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
         ttk.Button(b, text="Select all", command=self.select_all_accounts).pack(side="left")
         ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
@@ -179,13 +181,13 @@ class App:
             group_id = f"group_{group_index}"
             members = group_data["accounts"]
             self.tree.insert("", "end", iid=group_id, text=f'{group_data["name"]} ({len(members)})',
-                             values=("", ""), open=True, tags=("group",))
+                             values=("", "", ""), open=True, tags=("group",))
             for row_index, (i, account) in enumerate(members):
                 username = account["username"]
                 checkbox = "☑" if username in self.auto_join_users else "☐"
                 tag = "row_even" if row_index % 2 == 0 else "row_odd"
                 self.tree.insert(group_id, "end", iid=str(i), text=username,
-                                 values=(username, checkbox), tags=(tag,))
+                                 values=(username, checkbox, account.get("notes", "")), tags=(tag,))
 
     def select_all_accounts(self):
         self.tree.selection_set([str(i) for i in range(len(self.accounts))])
@@ -298,17 +300,91 @@ class App:
         self.auto_join_users.difference_update(removed)
         save_accounts(self.accounts); self.refresh(); self.status.set("Selected accounts deleted.")
 
+    def _profile_for_username(self, username):
+        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in username)
+        return os.path.join(PROFILES_DIR, safe)
+
+    def _is_roblox_logged_in(self, username):
+        profile = self._profile_for_username(username)
+        candidates = [
+            os.path.join(profile, "Default", "Network", "Cookies"),
+            os.path.join(profile, "Default", "Cookies"),
+        ]
+        for cookie_db in candidates:
+            if not os.path.isfile(cookie_db):
+                continue
+            temp_path = None
+            try:
+                fd, temp_path = tempfile.mkstemp(suffix=".sqlite")
+                os.close(fd)
+                shutil.copy2(cookie_db, temp_path)
+                con = sqlite3.connect(temp_path)
+                try:
+                    row = con.execute(
+                        "SELECT name FROM cookies WHERE name='.ROBLOSECURITY' LIMIT 1"
+                    ).fetchone()
+                    if row:
+                        return True
+                finally:
+                    con.close()
+            except Exception:
+                pass
+            finally:
+                if temp_path:
+                    try: os.remove(temp_path)
+                    except OSError: pass
+        return False
+
+    def _sync_login_note(self, account):
+        note = "Logged in" if self._is_roblox_logged_in(account["username"]) else "Not logged in"
+        changed = account.get("notes", "") != note
+        account["notes"] = note
+        return changed, note
+
+    def open_manual_login(self):
+        ids = [int(i) for i in self.tree.selection() if i.isdigit()]
+        if not ids:
+            return messagebox.showinfo("Select accounts", "Select one or more account rows first.")
+        blocked, to_open = [], []
+        changed = False
+        for i in ids:
+            account = self.accounts[i]
+            did_change, note = self._sync_login_note(account)
+            changed = changed or did_change
+            if note == "Logged in":
+                blocked.append(account["username"])
+            else:
+                to_open.append(i)
+        if changed:
+            save_accounts(self.accounts)
+            self.refresh()
+            self.tree.selection_set([str(i) for i in ids])
+        if to_open:
+            self._open_selected_indices(to_open, "https://www.roblox.com/login")
+        if blocked:
+            names = ", ".join(blocked)
+            messagebox.showinfo("Sudah login", f"{names} sudah terdeteksi login. Browser login tidak dibuka lagi.")
+            self.log_activity(f"Login detected for: {names}")
+        elif to_open:
+            self.log_activity("Opened manual login for accounts not logged in: " + ", ".join(self.accounts[i]["username"] for i in to_open))
+
+    def _open_selected_indices(self, ids, url):
+        chrome = find_chrome()
+        if not chrome:
+            return messagebox.showerror("Chrome not found", "Install Google Chrome, then restart V.")
+        for i in ids:
+            u = self.accounts[i]["username"]
+            profile = self._profile_for_username(u)
+            os.makedirs(profile, exist_ok=True)
+            try:
+                subprocess.Popen([chrome, "--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check", url])
+            except Exception as e:
+                return messagebox.showerror("Chrome launch failed", str(e))
+
     def open(self, url):
         ids = [int(i) for i in self.tree.selection() if i.isdigit()]
         if not ids: return messagebox.showinfo("Select accounts", "Select one or more account rows first.")
-        chrome = find_chrome()
-        if not chrome: return messagebox.showerror("Chrome not found", "Install Google Chrome, then restart V.")
-        for i in ids:
-            u = self.accounts[i]["username"]
-            safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in u)
-            profile = os.path.join(PROFILES_DIR, safe); os.makedirs(profile, exist_ok=True)
-            try: subprocess.Popen([chrome, "--user-data-dir="+profile, "--no-first-run", "--no-default-browser-check", url])
-            except Exception as e: return messagebox.showerror("Chrome launch failed", str(e))
+        self._open_selected_indices(ids, url)
         self.status.set(f"Opened {len(ids)} selected account browser(s).")
 
     def auto_join(self):
