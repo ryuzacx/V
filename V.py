@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.16"
+APP_VERSION = "1.0.17"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -306,34 +306,37 @@ class App:
         return os.path.join(PROFILES_DIR, safe)
 
     def _is_roblox_logged_in(self, username):
-        # Read Chrome's live cookie database directly. Copying Cookies while
-        # Chrome is open can miss the -wal journal and falsely report logout.
+        # Chrome may keep Cookies under Default/Network, Default, or another
+        # profile directory. Search the account's own Chrome profile recursively.
         profile = self._profile_for_username(username)
-        candidates = [
-            os.path.join(profile, "Default", "Network", "Cookies"),
-            os.path.join(profile, "Default", "Cookies"),
-        ]
-        checked_database = False
-        for cookie_db in candidates:
-            if not os.path.isfile(cookie_db):
-                continue
+        if not os.path.isdir(profile):
+            return None
+        cookie_dbs = []
+        for base, dirs, files in os.walk(profile):
+            dirs[:] = [d for d in dirs if d not in ("Cache", "Code Cache", "GPUCache")]
+            if "Cookies" in files:
+                cookie_dbs.append(os.path.join(base, "Cookies"))
+        if not cookie_dbs:
+            return None
+        checked_any = False
+        for cookie_db in cookie_dbs:
             try:
                 uri = "file:" + cookie_db.replace("\\", "/") + "?mode=ro"
                 con = sqlite3.connect(uri, uri=True, timeout=2)
                 try:
-                    checked_database = True
                     row = con.execute(
-                        "SELECT 1 FROM cookies WHERE upper(name)=upper(?) LIMIT 1",
+                        "SELECT 1 FROM cookies WHERE lower(name)=lower(?) LIMIT 1",
                         (".ROBLOSECURITY",)
                     ).fetchone()
+                    checked_any = True
                     if row:
                         return True
                 finally:
                     con.close()
             except Exception:
-                # A locked/unreadable database is an unknown state, not logout.
+                # A locked or unreadable database is unknown, not logged out.
                 continue
-        return False if checked_database else None
+        return False if checked_any else None
 
     def _sync_login_note(self, account):
         detected = self._is_roblox_logged_in(account["username"])
