@@ -1,14 +1,12 @@
 import os, json, base64, ctypes, subprocess, sys, urllib.request, hashlib, threading, time
 from ctypes import wintypes
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from PIL import Image, ImageTk
+from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.6"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
-SETTINGS_FILE = os.path.join(ROOT, "settings.json")
 PROFILES_DIR = os.path.join(ROOT, "chrome_profiles")
 os.makedirs(PROFILES_DIR, exist_ok=True)
 os.makedirs(ROOT, exist_ok=True)
@@ -58,21 +56,7 @@ def find_chrome():
 class App:
     def __init__(self, root):
         self.root, self.accounts = root, load_accounts()
-        root.title("V"); root.geometry("1000x760"); root.minsize(875, 700)
-        self.settings = {}
-        self.bg_path = ""
-        self.bg_photo = None
-        self.bg_label = tk.Label(root, bd=0, bg="#071326")
-        self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-        try:
-            if os.path.isfile(SETTINGS_FILE):
-                with open(SETTINGS_FILE, encoding="utf-8") as sf:
-                    self.settings = json.load(sf)
-                self.bg_path = self.settings.get("background", "")
-        except Exception:
-            self.settings = {}
-            self.bg_path = ""
-        root.bind("<Configure>", self._resize_background)
+        root.title("V"); root.geometry("820x620"); root.minsize(700, 520)
         style = ttk.Style(root)
         style.theme_use("clam")
         root.configure(bg="#071326")
@@ -88,12 +72,8 @@ class App:
                         relief="flat", font=("Segoe UI", 10, "bold"))
         style.map("Treeview.Heading", background=[("active", "#24558a")])
         style.map("Treeview", background=[("selected", "#24558a")], foreground=[("selected", "#ffffff")])
-        f = ttk.Frame(root, padding=12)
-        f.pack(anchor="nw", fill="none", expand=False)
-        self.main_frame = f
-        title_row = ttk.Frame(f)
-        title_row.pack(fill="x")
-        ttk.Label(title_row, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(side="left", anchor="w")
+        f = ttk.Frame(root, padding=12); f.pack(fill="both", expand=True)
+        ttk.Label(f, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(anchor="w")
         ttk.Label(f, text="Save accounts as username:password. Login is manual.").pack(anchor="w", pady=(3,10))
         row = ttk.Frame(f); row.pack(fill="x", pady=(0,8))
         self.entry = ttk.Entry(row); self.entry.pack(side="left", fill="x", expand=True)
@@ -108,16 +88,12 @@ class App:
         ttk.Spinbox(joinrow, from_=1, to=3600, width=6, textvariable=self.interval).pack(side="left", padx=(6,0))
 
         self.auto_join_users = set()
-        self.table_frame = ttk.Frame(f, width=int(self.settings.get("table_width", 850)), height=int(self.settings.get("table_height", 300)))
-        self.table_frame.pack(anchor="w", fill="none", expand=False)
-        self.table_frame.pack_propagate(False)
-        table_frame = self.table_frame
-        self.tree = ttk.Treeview(table_frame, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=10)
+        self.tree = ttk.Treeview(f, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=13)
         self.tree.heading("#0", text="Group / Account", anchor="w")
         self.tree.heading("username", text="Username", anchor="w")
         self.tree.heading("auto_join", text="Auto Join", anchor="center")
-        self.tree.column("#0", width=300, minwidth=180, stretch=False)
-        self.tree.column("username", width=260, minwidth=140, stretch=False)
+        self.tree.column("#0", width=300, minwidth=180, stretch=True)
+        self.tree.column("username", width=260, minwidth=140, stretch=True)
         self.tree.column("auto_join", width=100, minwidth=90, stretch=False, anchor="center")
         self.tree.tag_configure("group", background="#172b46", foreground="#ffffff", font=("Segoe UI", 10, "bold"))
         self.tree.tag_configure("row_even", background="#0b1b31", foreground="#dce8f8")
@@ -132,77 +108,26 @@ class App:
         self.context_menu.add_command(label="Copy username:password", command=lambda: self.copy_selected("combo"))
         self.context_menu.add_separator()
         self.context_menu.add_command(label="Ganti Group / Move To Group", command=self.move_selected_to_group)
-        self.tree.pack(side="left", fill="both", expand=True)
-        tree_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        tree_scroll.pack(side="right", fill="y")
-        self.tree.configure(yscrollcommand=tree_scroll.set)
+        self.tree.pack(fill="both", expand=True)
+        b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
+        ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
+        ttk.Button(b, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
+        ttk.Button(b, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
+        ttk.Button(b, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
+        ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
+        ttk.Button(b, text="Select all", command=self.select_all_accounts).pack(side="left")
+        ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
         self.status = tk.StringVar(value="Ready")
-        self._panel_save_job = None
-        self._build_control_panel()
+        ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
 
-        self.join_queue = []
-        self.queue_active = False
-        self.refresh()
-        root.after(1500, self.check_update)
-
-    def _save_settings(self):
-        try:
-            with open(SETTINGS_FILE + ".tmp", "w", encoding="utf-8") as sf:
-                json.dump(self.settings, sf, indent=2)
-            os.replace(SETTINGS_FILE + ".tmp", SETTINGS_FILE)
-        except Exception:
-            pass
-
-    def _build_control_panel(self):
-        self.control_panel = ttk.LabelFrame(self.main_frame, text="Controls & Activity", padding=8)
-        self.control_panel.pack(anchor="w", fill="x", pady=(10, 0))
-        buttons = ttk.Frame(self.control_panel)
-        buttons.pack(fill="x", pady=(0, 8))
-        controls = [
-            ("Open browser", lambda: self.open("https://www.roblox.com/home")),
-            ("Auto Join", self.auto_join), ("Stop queue", self.stop_queue),
-            ("Open manual login", lambda: self.open("https://www.roblox.com/login")),
-            ("Delete selected", self.delete), ("Select all", self.select_all_accounts),
-            ("Clear selection", lambda: self.tree.selection_remove(self.tree.selection())),
-            ("Ganti BG", self.change_background),
-        ]
-        for label, command in controls:
-            ttk.Button(buttons, text=label, command=command).pack(side="left", padx=(0, 6))
-        settings_row = ttk.Frame(self.control_panel)
-        settings_row.pack(fill="x", pady=(0, 6))
-        ttk.Label(settings_row, text="Table width").pack(side="left")
-        self.table_width_var = tk.IntVar(value=int(self.settings.get("table_width", 850)))
-        tk.Scale(settings_row, from_=500, to=1500, orient="horizontal", variable=self.table_width_var,
-                 showvalue=True, length=150, resolution=10, command=self._set_table_size,
-                 bg="#071326", fg="#dbeafe", troughcolor="#183b66", highlightthickness=0, bd=0).pack(side="left", padx=(4, 12))
-        ttk.Label(settings_row, text="Table height").pack(side="left")
-        self.table_height_var = tk.IntVar(value=int(self.settings.get("table_height", 300)))
-        tk.Scale(settings_row, from_=150, to=800, orient="horizontal", variable=self.table_height_var,
-                 showvalue=True, length=150, resolution=10, command=self._set_table_size,
-                 bg="#071326", fg="#dbeafe", troughcolor="#183b66", highlightthickness=0, bd=0).pack(side="left", padx=(4, 12))
-        ttk.Label(settings_row, text="Opacity").pack(side="left")
-        try:
-            self.window_opacity = max(20, min(100, int(self.settings.get("window_opacity", 100))))
-        except (TypeError, ValueError):
-            self.window_opacity = 100
-        self.opacity_value = tk.StringVar(value=f"{self.window_opacity}%")
-        ttk.Label(settings_row, textvariable=self.opacity_value, width=5).pack(side="left", padx=(4, 4))
-        self.opacity_scale = tk.Scale(settings_row, from_=20, to=100, orient="horizontal", showvalue=False,
-                                      length=140, resolution=1, command=self._set_window_opacity,
-                                      bg="#071326", fg="#dbeafe", troughcolor="#183b66", highlightthickness=0, bd=0)
-        self.opacity_scale.set(self.window_opacity)
-        self.opacity_scale.pack(side="left")
-        status_row = ttk.Frame(self.control_panel)
-        status_row.pack(fill="x", pady=(0, 6))
-        ttk.Label(status_row, textvariable=self.status, relief="sunken", anchor="w").pack(side="left", fill="x", expand=True)
-        log_header = ttk.Frame(self.control_panel)
-        log_header.pack(fill="x", pady=(0, 3))
+        log_header = ttk.Frame(f)
+        log_header.pack(fill="x", pady=(10,3))
         ttk.Label(log_header, text="Activity Log", font=("Segoe UI", 10, "bold")).pack(side="left")
         self.live_clock = ttk.Label(log_header, text="--:--:--", font=("Consolas", 10, "bold"))
         self.live_clock.pack(side="right")
-        log_frame = ttk.Frame(self.control_panel)
-        log_frame.pack(fill="both", expand=True)
-        self.log_box = tk.Text(log_frame, height=5, wrap="word", state="disabled",
+        log_frame = ttk.Frame(f)
+        log_frame.pack(fill="both", expand=False)
+        self.log_box = tk.Text(log_frame, height=6, wrap="word", state="disabled",
                                bg="#08172a", fg="#cbdcf3", insertbackground="#ffffff",
                                selectbackground="#24558a", relief="flat", bd=0,
                                font=("Consolas", 9), padx=8, pady=6)
@@ -212,71 +137,11 @@ class App:
         self.log_box.configure(yscrollcommand=log_scroll.set)
         self.status.trace_add("write", self._status_changed)
         self.root.after(250, self._update_clock)
-        self._set_table_size()
-        self._set_window_opacity(str(self.window_opacity))
-
-    def _set_table_size(self, *_):
-        try:
-            width = max(500, min(1500, int(self.table_width_var.get())))
-            height = max(150, min(800, int(self.table_height_var.get())))
-            self.table_frame.configure(width=width, height=height)
-            self.settings["table_width"] = width
-            self.settings["table_height"] = height
-            self._save_settings()
-        except (tk.TclError, ValueError, AttributeError):
-            pass
-
-    def _set_window_opacity(self, value):
-        try:
-            self.window_opacity = max(20, min(100, int(float(value))))
-            self.opacity_value.set(f"{self.window_opacity}%")
-            self.root.attributes("-alpha", self.window_opacity / 100)
-            self.settings["window_opacity"] = self.window_opacity
-            self._save_settings()
-        except (tk.TclError, ValueError, AttributeError):
-            pass
-
-    def _resize_background(self, event=None):
-        if event is not None and event.widget is not self.root:
-            return
-        if not self.bg_path or not os.path.isfile(self.bg_path):
-            self.bg_label.configure(image="", bg="#071326")
-            self.bg_photo = None
-            return
-        try:
-            image = Image.open(self.bg_path).convert("RGB")
-            width = max(1, self.root.winfo_width())
-            height = max(1, self.root.winfo_height())
-            scale = max(width / image.width, height / image.height)
-            size = (max(width, int(image.width * scale)), max(height, int(image.height * scale)))
-            image = image.resize(size, Image.Resampling.LANCZOS)
-            left = max(0, (image.width - width) // 2)
-            top = max(0, (image.height - height) // 2)
-            image = image.crop((left, top, left + width, top + height))
-            self.bg_photo = ImageTk.PhotoImage(image)
-            self.bg_label.configure(image=self.bg_photo)
-            self.bg_label.lower()
-        except Exception as e:
-            self.bg_label.configure(image="", bg="#071326")
-            self.bg_photo = None
-            self.log_activity(f"Background image could not be loaded: {e}")
-
-    def change_background(self):
-        path = filedialog.askopenfilename(
-            parent=self.root, title="Pilih background",
-            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"), ("All files", "*.*")])
-        if not path:
-            return
-        try:
-            with Image.open(path) as im:
-                im.verify()
-            self.bg_path = path
-            self.settings["background"] = self.bg_path
-            self._save_settings()
-            self._resize_background()
-            self.status.set("Background changed.")
-        except Exception as e:
-            messagebox.showerror("Background gagal", str(e), parent=self.root)
+        ttk.Label(f, text="CAPTCHA and 2FA must be completed manually.").pack(anchor="w", pady=(6,0))
+        self.join_queue = []
+        self.queue_active = False
+        self.refresh()
+        root.after(1500, self.check_update)
 
     def _update_clock(self):
         self.live_clock.configure(text=time.strftime("%H:%M:%S"))
@@ -292,7 +157,7 @@ class App:
             return
         stamp = time.strftime("%H:%M:%S")
         self.log_box.configure(state="normal")
-        self.log_box.insert("end", f"[{stamp}] {message}\n")
+        self.log_box.insert("end", f"[{stamp}] {message}\\n")
         self.log_box.see("end")
         # Keep the activity panel bounded during long sessions.
         lines = int(self.log_box.index("end-1c").split(".")[0])
