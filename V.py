@@ -106,7 +106,7 @@ class App:
         ttk.Button(b, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
         ttk.Button(b, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
         ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
-        ttk.Button(b, text="Select all", command=lambda: self.tree.selection_set(self.tree.get_children())).pack(side="left")
+        ttk.Button(b, text="Select all", command=lambda: self.tree.selection_set(self.tree.get_children("group_default"))).pack(side="left")
         ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
         self.status = tk.StringVar(value="Ready")
         ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
