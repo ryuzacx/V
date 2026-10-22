@@ -95,7 +95,10 @@ class App:
         ttk.Spinbox(joinrow, from_=1, to=3600, width=6, textvariable=self.interval).pack(side="left", padx=(6,0))
 
         self.auto_join_users = set()
-        self.tree = ttk.Treeview(f, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=13)
+        self.table_width = max(420, min(1800, int(self.ui_settings.get("table_width", 1100))))
+        self.table_height = max(140, min(1000, int(self.ui_settings.get("table_height", 360))))
+        self.table_shell = ttk.Frame(f, width=self.table_width, height=self.table_height)
+        self.tree = ttk.Treeview(self.table_shell, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=13)
         self.tree.heading("#0", text="Group / Account", anchor="w")
         self.tree.heading("username", text="Username", anchor="w")
         self.tree.heading("auto_join", text="Auto Join", anchor="center")
@@ -116,15 +119,11 @@ class App:
         self.context_menu.add_separator()
         self.context_menu.add_command(label="Ganti Group / Move To Group", command=self.move_selected_to_group)
         # Keep the table inside the main window; drag the bottom-right grip to resize it.
-        self.table_width = max(420, min(1800, int(self.ui_settings.get("table_width", 1100))))
-        self.table_height = max(140, min(1000, int(self.ui_settings.get("table_height", 360))))
-        self.table_shell = ttk.Frame(f, width=self.table_width, height=self.table_height)
         self.table_shell.pack(anchor="nw", pady=(0, 0))
         self.table_shell.pack_propagate(False)
         self.table_shell.rowconfigure(0, weight=1)
         self.table_shell.columnconfigure(0, weight=1)
-        self.tree.pack_forget()
-        self.tree.grid(in_=self.table_shell, row=0, column=0, sticky="nsew")
+        self.tree.grid(row=0, column=0, sticky="nsew")
         self.resize_grip = ttk.Label(self.table_shell, text="◢", anchor="center", cursor="size_nw_se",
                                      background="#183b66", foreground="#dbeafe")
         self.resize_grip.grid(row=1, column=0, sticky="e")
