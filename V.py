@@ -3,7 +3,7 @@ from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -143,6 +143,7 @@ class App:
         self.join_queue = []
         self.queue_active = False
         self.refresh()
+        root.after(3000, self.refresh_login_status)
         root.after(1500, self.check_update)
 
     def _update_clock(self):
@@ -340,6 +341,21 @@ class App:
         changed = account.get("notes", "") != note
         account["notes"] = note
         return changed, note
+
+    def refresh_login_status(self):
+        changed_users = []
+        for account in self.accounts:
+            changed, note = self._sync_login_note(account)
+            if changed:
+                changed_users.append(account["username"])
+        if changed_users:
+            try:
+                save_accounts(self.accounts)
+                self.refresh()
+                self.log_activity("Login status updated: " + ", ".join(changed_users))
+            except Exception as exc:
+                self.log_activity(f"Could not save login status: {exc}")
+        self.root.after(15000, self.refresh_login_status)
 
     def open_manual_login(self):
         ids = [int(i) for i in self.tree.selection() if i.isdigit()]
