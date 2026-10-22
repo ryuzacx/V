@@ -1,12 +1,14 @@
 import os, json, base64, ctypes, subprocess, sys, urllib.request, hashlib, threading, time
 from ctypes import wintypes
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
+from PIL import Image, ImageTk
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
+SETTINGS_FILE = os.path.join(ROOT, "settings.json")
 PROFILES_DIR = os.path.join(ROOT, "chrome_profiles")
 os.makedirs(PROFILES_DIR, exist_ok=True)
 os.makedirs(ROOT, exist_ok=True)
@@ -56,7 +58,18 @@ def find_chrome():
 class App:
     def __init__(self, root):
         self.root, self.accounts = root, load_accounts()
-        root.title("V"); root.geometry("820x620"); root.minsize(700, 520)
+        root.title("V"); root.geometry("1000x760"); root.minsize(875, 700)
+        self.bg_path = ""
+        self.bg_photo = None
+        self.bg_label = tk.Label(root, bd=0, bg="#071326")
+        self.bg_label.place(x=0, y=0, relwidth=1, relheight=1)
+        try:
+            if os.path.isfile(SETTINGS_FILE):
+                with open(SETTINGS_FILE, encoding="utf-8") as sf:
+                    self.bg_path = json.load(sf).get("background", "")
+        except Exception:
+            self.bg_path = ""
+        root.bind("<Configure>", self._resize_background)
         style = ttk.Style(root)
         style.theme_use("clam")
         root.configure(bg="#071326")
@@ -72,7 +85,8 @@ class App:
                         relief="flat", font=("Segoe UI", 10, "bold"))
         style.map("Treeview.Heading", background=[("active", "#24558a")])
         style.map("Treeview", background=[("selected", "#24558a")], foreground=[("selected", "#ffffff")])
-        f = ttk.Frame(root, padding=12); f.pack(fill="both", expand=True)
+        f = ttk.Frame(root, padding=12)
+        f.place(x=0, y=0, width=875)
         ttk.Label(f, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(anchor="w")
         ttk.Label(f, text="Save accounts as username:password. Login is manual.").pack(anchor="w", pady=(3,10))
         row = ttk.Frame(f); row.pack(fill="x", pady=(0,8))
@@ -88,12 +102,15 @@ class App:
         ttk.Spinbox(joinrow, from_=1, to=3600, width=6, textvariable=self.interval).pack(side="left", padx=(6,0))
 
         self.auto_join_users = set()
-        self.tree = ttk.Treeview(f, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=13)
+        table_frame = ttk.Frame(f, width=850, height=300)
+        table_frame.pack(anchor="w", fill="none", expand=False)
+        table_frame.pack_propagate(False)
+        self.tree = ttk.Treeview(table_frame, columns=("username","auto_join"), show="tree headings", selectmode="extended", height=10)
         self.tree.heading("#0", text="Group / Account", anchor="w")
         self.tree.heading("username", text="Username", anchor="w")
         self.tree.heading("auto_join", text="Auto Join", anchor="center")
-        self.tree.column("#0", width=300, minwidth=180, stretch=True)
-        self.tree.column("username", width=260, minwidth=140, stretch=True)
+        self.tree.column("#0", width=300, minwidth=180, stretch=False)
+        self.tree.column("username", width=260, minwidth=140, stretch=False)
         self.tree.column("auto_join", width=100, minwidth=90, stretch=False, anchor="center")
         self.tree.tag_configure("group", background="#172b46", foreground="#ffffff", font=("Segoe UI", 10, "bold"))
         self.tree.tag_configure("row_even", background="#0b1b31", foreground="#dce8f8")
@@ -108,7 +125,10 @@ class App:
         self.context_menu.add_command(label="Copy username:password", command=lambda: self.copy_selected("combo"))
         self.context_menu.add_separator()
         self.context_menu.add_command(label="Ganti Group / Move To Group", command=self.move_selected_to_group)
-        self.tree.pack(fill="both", expand=True)
+        self.tree.pack(side="left", fill="both", expand=True)
+        tree_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        tree_scroll.pack(side="right", fill="y")
+        self.tree.configure(yscrollcommand=tree_scroll.set)
         b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
         ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
         ttk.Button(b, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
@@ -117,6 +137,7 @@ class App:
         ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
         ttk.Button(b, text="Select all", command=self.select_all_accounts).pack(side="left")
         ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
+        ttk.Button(b, text="Ganti BG", command=self.change_background).pack(side="left", padx=(8,0))
         self.status = tk.StringVar(value="Ready")
         ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
 
@@ -142,6 +163,48 @@ class App:
         self.queue_active = False
         self.refresh()
         root.after(1500, self.check_update)
+
+    def _resize_background(self, event=None):
+        if event is not None and event.widget is not self.root:
+            return
+        if not self.bg_path or not os.path.isfile(self.bg_path):
+            self.bg_label.configure(image="", bg="#071326")
+            self.bg_photo = None
+            return
+        try:
+            image = Image.open(self.bg_path).convert("RGB")
+            width = max(1, self.root.winfo_width())
+            height = max(1, self.root.winfo_height())
+            scale = max(width / image.width, height / image.height)
+            size = (max(width, int(image.width * scale)), max(height, int(image.height * scale)))
+            image = image.resize(size, Image.Resampling.LANCZOS)
+            left = max(0, (image.width - width) // 2)
+            top = max(0, (image.height - height) // 2)
+            image = image.crop((left, top, left + width, top + height))
+            self.bg_photo = ImageTk.PhotoImage(image)
+            self.bg_label.configure(image=self.bg_photo)
+            self.bg_label.lower()
+        except Exception as e:
+            self.bg_label.configure(image="", bg="#071326")
+            self.bg_photo = None
+            self.log_activity(f"Background image could not be loaded: {e}")
+
+    def change_background(self):
+        path = filedialog.askopenfilename(
+            parent=self.root, title="Pilih background",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            with Image.open(path) as im:
+                im.verify()
+            self.bg_path = path
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as sf:
+                json.dump({"background": self.bg_path}, sf)
+            self._resize_background()
+            self.status.set("Background changed.")
+        except Exception as e:
+            messagebox.showerror("Background gagal", str(e), parent=self.root)
 
     def _update_clock(self):
         self.live_clock.configure(text=time.strftime("%H:%M:%S"))
