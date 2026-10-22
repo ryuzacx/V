@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 OWNER, REPO = "ryuzacx", "V"
 ROOT = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "VLauncher")
 DATA_FILE = os.path.join(ROOT, "accounts.json")
@@ -59,6 +59,7 @@ class App:
     def __init__(self, root):
         self.root, self.accounts = root, load_accounts()
         root.title("V"); root.geometry("1000x760"); root.minsize(875, 700)
+        self.settings = {}
         self.bg_path = ""
         self.bg_photo = None
         self.bg_label = tk.Label(root, bd=0, bg="#071326")
@@ -66,8 +67,10 @@ class App:
         try:
             if os.path.isfile(SETTINGS_FILE):
                 with open(SETTINGS_FILE, encoding="utf-8") as sf:
-                    self.bg_path = json.load(sf).get("background", "")
+                    self.settings = json.load(sf)
+                self.bg_path = self.settings.get("background", "")
         except Exception:
+            self.settings = {}
             self.bg_path = ""
         root.bind("<Configure>", self._resize_background)
         style = ttk.Style(root)
@@ -87,7 +90,10 @@ class App:
         style.map("Treeview", background=[("selected", "#24558a")], foreground=[("selected", "#ffffff")])
         f = ttk.Frame(root, padding=12)
         f.place(x=0, y=0, width=875)
-        ttk.Label(f, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(anchor="w")
+        title_row = ttk.Frame(f)
+        title_row.pack(fill="x")
+        ttk.Label(title_row, text="V — Roblox Manual Session Launcher", font=("Segoe UI", 15, "bold")).pack(side="left", anchor="w")
+        ttk.Button(title_row, text="Show Controls", command=self.show_control_panel).pack(side="right")
         ttk.Label(f, text="Save accounts as username:password. Login is manual.").pack(anchor="w", pady=(3,10))
         row = ttk.Frame(f); row.pack(fill="x", pady=(0,8))
         self.entry = ttk.Entry(row); self.entry.pack(side="left", fill="x", expand=True)
@@ -129,25 +135,70 @@ class App:
         tree_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
         tree_scroll.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=tree_scroll.set)
-        b = ttk.Frame(f); b.pack(fill="x", pady=(10,0))
-        ttk.Button(b, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
-        ttk.Button(b, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
-        ttk.Button(b, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
-        ttk.Button(b, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
-        ttk.Button(b, text="Delete selected", command=self.delete).pack(side="left", padx=8)
-        ttk.Button(b, text="Select all", command=self.select_all_accounts).pack(side="left")
-        ttk.Button(b, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
-        ttk.Button(b, text="Ganti BG", command=self.change_background).pack(side="left", padx=(8,0))
         self.status = tk.StringVar(value="Ready")
-        ttk.Label(f, textvariable=self.status, relief="sunken", anchor="w").pack(fill="x", pady=(10,0))
+        self._panel_save_job = None
+        self._build_control_panel()
 
-        log_header = ttk.Frame(f)
-        log_header.pack(fill="x", pady=(10,3))
+        self.join_queue = []
+        self.queue_active = False
+        self.refresh()
+        root.after(1500, self.check_update)
+
+    def _save_settings(self):
+        try:
+            with open(SETTINGS_FILE + ".tmp", "w", encoding="utf-8") as sf:
+                json.dump(self.settings, sf, indent=2)
+            os.replace(SETTINGS_FILE + ".tmp", SETTINGS_FILE)
+        except Exception:
+            pass
+
+    def _build_control_panel(self):
+        self.control_panel = tk.Toplevel(self.root)
+        self.control_panel.title("V — Controls & Activity")
+        self.control_panel.configure(bg="#071326")
+        self.control_panel.minsize(560, 220)
+        self.control_panel.geometry(self.settings.get("control_geometry", "900x300+20+500"))
+        try:
+            self.panel_opacity = max(20, min(100, int(self.settings.get("control_opacity", 75))))
+        except (TypeError, ValueError):
+            self.panel_opacity = 75
+        self.control_panel.attributes("-alpha", self.panel_opacity / 100)
+        panel = ttk.Frame(self.control_panel, padding=10)
+        panel.pack(fill="both", expand=True)
+        buttons = ttk.Frame(panel)
+        buttons.pack(fill="x", pady=(0,8))
+        ttk.Button(buttons, text="Open browser", command=lambda: self.open("https://www.roblox.com/home")).pack(side="left")
+        ttk.Button(buttons, text="Auto Join", command=self.auto_join).pack(side="left", padx=(8,0))
+        ttk.Button(buttons, text="Stop queue", command=self.stop_queue).pack(side="left", padx=(8,0))
+        ttk.Button(buttons, text="Open manual login", command=lambda: self.open("https://www.roblox.com/login")).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Delete selected", command=self.delete).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Select all", command=self.select_all_accounts).pack(side="left")
+        ttk.Button(buttons, text="Clear selection", command=lambda: self.tree.selection_remove(self.tree.selection())).pack(side="left", padx=8)
+        ttk.Button(buttons, text="Ganti BG", command=self.change_background).pack(side="left", padx=(8,0))
+
+        opacity_row = ttk.Frame(panel)
+        opacity_row.pack(fill="x", pady=(0,6))
+        ttk.Label(opacity_row, text="Opacity:").pack(side="left")
+        self.opacity_value = tk.StringVar(value=f"{self.panel_opacity}%")
+        ttk.Label(opacity_row, textvariable=self.opacity_value, width=5).pack(side="left", padx=(4,8))
+        self.opacity_scale = tk.Scale(opacity_row, from_=20, to=100, orient="horizontal",
+                                      showvalue=False, resolution=1, length=180,
+                                      bg="#071326", fg="#dbeafe", troughcolor="#183b66",
+                                      highlightthickness=0, bd=0, command=self._set_panel_opacity)
+        self.opacity_scale.set(self.panel_opacity)
+        self.opacity_scale.pack(side="left")
+        ttk.Label(opacity_row, text="Drag the panel to move; resize its edges. Position, size and opacity save automatically.").pack(side="left", padx=(10,0))
+
+        status_row = ttk.Frame(panel)
+        status_row.pack(fill="x", pady=(0,6))
+        ttk.Label(status_row, textvariable=self.status, relief="sunken", anchor="w").pack(side="left", fill="x", expand=True)
+        log_header = ttk.Frame(panel)
+        log_header.pack(fill="x", pady=(0,3))
         ttk.Label(log_header, text="Activity Log", font=("Segoe UI", 10, "bold")).pack(side="left")
         self.live_clock = ttk.Label(log_header, text="--:--:--", font=("Consolas", 10, "bold"))
         self.live_clock.pack(side="right")
-        log_frame = ttk.Frame(f)
-        log_frame.pack(fill="both", expand=False)
+        log_frame = ttk.Frame(panel)
+        log_frame.pack(fill="both", expand=True)
         self.log_box = tk.Text(log_frame, height=6, wrap="word", state="disabled",
                                bg="#08172a", fg="#cbdcf3", insertbackground="#ffffff",
                                selectbackground="#24558a", relief="flat", bd=0,
@@ -158,11 +209,55 @@ class App:
         self.log_box.configure(yscrollcommand=log_scroll.set)
         self.status.trace_add("write", self._status_changed)
         self.root.after(250, self._update_clock)
-        ttk.Label(f, text="CAPTCHA and 2FA must be completed manually.").pack(anchor="w", pady=(6,0))
-        self.join_queue = []
-        self.queue_active = False
-        self.refresh()
-        root.after(1500, self.check_update)
+        self.control_panel.bind("<Configure>", self._schedule_panel_save)
+        self.control_panel.protocol("WM_DELETE_WINDOW", self._hide_control_panel)
+        self.control_panel.update_idletasks()
+        if "control_geometry" not in self.settings:
+            screen_h = self.control_panel.winfo_screenheight()
+            self.control_panel.geometry(f"900x300+20+{max(0, screen_h - 330)}")
+        self._schedule_panel_save()
+
+    def _set_panel_opacity(self, value):
+        try:
+            self.panel_opacity = max(20, min(100, int(float(value))))
+            self.opacity_value.set(f"{self.panel_opacity}%")
+            self.control_panel.attributes("-alpha", self.panel_opacity / 100)
+            self.settings["control_opacity"] = self.panel_opacity
+            self._schedule_panel_save()
+        except (tk.TclError, ValueError):
+            pass
+
+    def _schedule_panel_save(self, event=None):
+        if event is not None and event.widget is not self.control_panel:
+            return
+        if self._panel_save_job is not None:
+            try:
+                self.root.after_cancel(self._panel_save_job)
+            except tk.TclError:
+                pass
+        self._panel_save_job = self.root.after(450, self._persist_panel_settings)
+
+    def _persist_panel_settings(self):
+        self._panel_save_job = None
+        try:
+            if self.control_panel.winfo_exists() and self.control_panel.state() != "withdrawn":
+                self.settings["control_geometry"] = self.control_panel.geometry()
+            self.settings["control_opacity"] = self.panel_opacity
+            self._save_settings()
+        except tk.TclError:
+            pass
+
+    def _hide_control_panel(self):
+        self._persist_panel_settings()
+        self.control_panel.withdraw()
+        self.status.set("Controls hidden. Click Show Controls to reopen.")
+
+    def show_control_panel(self):
+        if not self.control_panel.winfo_exists():
+            return
+        self.control_panel.deiconify()
+        self.control_panel.lift()
+        self.status.set("Controls panel opened.")
 
     def _resize_background(self, event=None):
         if event is not None and event.widget is not self.root:
@@ -199,8 +294,8 @@ class App:
             with Image.open(path) as im:
                 im.verify()
             self.bg_path = path
-            with open(SETTINGS_FILE, "w", encoding="utf-8") as sf:
-                json.dump({"background": self.bg_path}, sf)
+            self.settings["background"] = self.bg_path
+            self._save_settings()
             self._resize_background()
             self.status.set("Background changed.")
         except Exception as e:
